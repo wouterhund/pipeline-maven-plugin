@@ -16,9 +16,19 @@ import org.kohsuke.stapler.DataBoundConstructor;
  */
 public class WorkflowJobDependencyTrigger extends Trigger<Item> {
 
-    @DataBoundConstructor
-    public WorkflowJobDependencyTrigger(){
+    private final String upstreamProjectRegex;
 
+    @DataBoundConstructor
+    public WorkflowJobDependencyTrigger(String upstreamProjectRegex) {
+        this.upstreamProjectRegex = upstreamProjectRegex;
+    }
+
+    public WorkflowJobDependencyTrigger() {
+        this(null);
+    }
+
+    public String getUpstreamProjectRegex() {
+        return upstreamProjectRegex;
     }
 
     @Symbol("snapshotDependencies")

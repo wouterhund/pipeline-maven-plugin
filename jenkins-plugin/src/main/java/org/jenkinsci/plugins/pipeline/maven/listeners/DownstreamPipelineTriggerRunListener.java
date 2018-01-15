@@ -27,6 +27,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import javax.annotation.Nonnull;
 import javax.annotation.Nullable;
@@ -104,6 +107,20 @@ public class DownstreamPipelineTriggerRunListener extends RunListener<WorkflowRu
             if (downstreamPipelineTrigger == null) {
                 LOGGER.log(Level.FINE, "Skip triggering of downstream pipeline {0} from upstream build {1}: dependency trigger not configured", new Object[]{downstreamPipeline.getFullName(), upstreamBuild.getFullDisplayName()});
                 continue;
+            }
+
+            String upstreamProjectRegex = downstreamPipelineTrigger.getUpstreamProjectRegex();
+            if(upstreamProjectRegex != null && !upstreamProjectRegex.isEmpty()) {
+                try {
+                    Pattern pattern = Pattern.compile(upstreamProjectRegex);
+                    Matcher matcher = pattern.matcher(upstreamPipeline.getFullName());
+                    if(!matcher.matches()) {
+                        LOGGER.log(Level.FINE, "Skip triggering of downstream pipeline {0} from upstream build {1}: dependency trigger does not allow {2}", new Object[]{downstreamPipeline.getFullName(), upstreamBuild.getFullDisplayName(), upstreamPipeline.getFullName()});
+                        continue;
+                    }
+                }catch(PatternSyntaxException e) {
+                    LOGGER.log(Level.WARNING, "Illegal upstreamProjectRegex {0} for {1}", new Object[]{upstreamProjectRegex, downstreamPipeline.getFullName()});
+                }
             }
 
             boolean downstreamVisibleByUpstreamBuildAuth = isDownstreamVisibleByUpstreamBuildAuth(downstreamPipeline);
