@@ -30,6 +30,7 @@ import org.apache.commons.io.IOUtils;
 import org.h2.api.ErrorCode;
 import org.h2.jdbcx.JdbcConnectionPool;
 import org.jenkinsci.plugins.pipeline.maven.MavenArtifact;
+import org.jenkinsci.plugins.pipeline.maven.MavenDependency;
 import org.jenkinsci.plugins.pipeline.maven.util.ClassUtils;
 import org.jenkinsci.plugins.pipeline.maven.util.RuntimeIoException;
 import org.jenkinsci.plugins.pipeline.maven.util.RuntimeSqlException;
@@ -123,6 +124,47 @@ public class PipelineMavenPluginH2Dao implements PipelineMavenPluginDao {
         } catch (SQLException e) {
             throw new RuntimeSqlException(e);
         }
+    }
+
+    @Nonnull
+    @Override
+    public List<MavenDependency> listDependencies(@Nonnull String jobFullName, int buildNumber) {
+        LOGGER.log(Level.FINER, "listDependencies({0}, {1})", new Object[]{jobFullName, buildNumber});
+        String dependenciesSql = "SELECT DISTINCT MAVEN_ARTIFACT.*,  MAVEN_DEPENDENCY.scope " +
+                " FROM MAVEN_ARTIFACT " +
+                " INNER JOIN MAVEN_DEPENDENCY ON MAVEN_ARTIFACT.ID = MAVEN_DEPENDENCY.ARTIFACT_ID" +
+                " INNER JOIN JENKINS_BUILD ON MAVEN_DEPENDENCY.BUILD_ID = JENKINS_BUILD.ID " +
+                " INNER JOIN JENKINS_JOB ON JENKINS_BUILD.JOB_ID = JENKINS_JOB.ID " +
+                " WHERE " +
+                "   JENKINS_JOB.FULL_NAME = ? AND" +
+                "   JENKINS_BUILD.NUMBER = ? ";
+
+        List<MavenDependency> results = new ArrayList<>();
+        try (Connection cnn = this.jdbcConnectionPool.getConnection()) {
+            try (PreparedStatement stmt = cnn.prepareStatement(dependenciesSql)) {
+                stmt.setString(1, jobFullName);
+                stmt.setInt(2, buildNumber);
+                try (ResultSet rst = stmt.executeQuery()) {
+                    while (rst.next()) {
+                        MavenDependency artifact = new MavenDependency();
+
+                        artifact.groupId = rst.getString("maven_artifact.group_id");
+                        artifact.artifactId = rst.getString("maven_artifact.artifact_id");
+                        artifact.version = rst.getString("maven_artifact.version");
+                        artifact.snapshot = artifact.version.endsWith("-SNAPSHOT");
+                        artifact.type = rst.getString("maven_artifact.type");
+                        artifact.classifier = rst.getString("maven_artifact.classifier");
+                        artifact.setScope(rst.getString("maven_dependency.scope"));
+                        results.add(artifact);
+                    }
+                }
+            }
+        } catch(SQLException e) {
+            throw new RuntimeSqlException(e);
+        }
+
+        Collections.sort(results);
+        return results;
     }
 
     @Override
@@ -464,6 +506,9 @@ public class PipelineMavenPluginH2Dao implements PipelineMavenPluginDao {
     public List<String> listDownstreamJobs(@Nonnull String jobFullName, int buildNumber) {
         List<String> downstreamJobs = listDownstreamPipelinesBasedOnMavenDependencies(jobFullName, buildNumber);
         downstreamJobs.addAll(listDownstreamPipelinesBasedOnParentProjectDependencies(jobFullName, buildNumber));
+
+        // JENKINS-50507 Don't return the passed job in case of pipelines consuming the artifacts they produce
+        downstreamJobs.remove(jobFullName);
         return downstreamJobs;
     }
 
@@ -557,6 +602,10 @@ public class PipelineMavenPluginH2Dao implements PipelineMavenPluginDao {
     public Map<String, Integer> listUpstreamJobs(@Nonnull String jobFullName, int buildNumber) {
         Map<String, Integer> upstreamJobs = listUpstreamPipelinesBasedOnMavenDependencies(jobFullName, buildNumber);
         upstreamJobs.putAll(listUpstreamPipelinesBasedOnParentProjectDependencies(jobFullName, buildNumber));
+
+        // JENKINS-50507 Don't return the passed job in case of pipelines consuming the artifacts they produce
+        upstreamJobs.remove(jobFullName);
+
         return upstreamJobs;
     }
     
