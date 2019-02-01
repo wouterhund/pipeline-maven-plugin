@@ -6,6 +6,7 @@ import jenkins.mvn.DefaultSettingsProvider;
 import jenkins.mvn.GlobalMavenConfig;
 import jenkins.plugins.git.GitSampleRepoRule;
 import jenkins.scm.impl.mock.GitSampleRepoRuleUtils;
+import org.jenkinsci.plugins.pipeline.maven.dao.PipelineMavenPluginDao;
 import org.junit.Before;
 import org.junit.ClassRule;
 import org.junit.Rule;
@@ -13,6 +14,8 @@ import org.jvnet.hudson.test.BuildWatcher;
 import org.jvnet.hudson.test.ExtendedToolInstallations;
 import org.jvnet.hudson.test.JenkinsRule;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -42,6 +45,13 @@ public abstract class AbstractIntegrationTest {
         globalMavenConfig.setSettingsProvider(new DefaultSettingsProvider());
     }
 
+    public void after() throws IOException {
+        PipelineMavenPluginDao dao = GlobalPipelineMavenConfig.get().getDao();
+        if (dao instanceof Closeable) {
+            ((Closeable) dao).close();
+        }
+    }
+
     @Rule
     public GitSampleRepoRule gitRepoRule = new GitSampleRepoRule();
 
@@ -59,6 +69,10 @@ public abstract class AbstractIntegrationTest {
 
     protected void loadMavenJarWithParentPomProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
         loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/maven_jar_with_parent_pom_project/");
+    }
+
+    protected void loadMavenJarWithJacocoInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
+        loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/maven_jar_with_jacoco_project/");
     }
 
     protected void loadMavenWarProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
@@ -79,6 +93,18 @@ public abstract class AbstractIntegrationTest {
 
     protected void loadJenkinsPluginProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
         loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/maven_hpi_project/");
+    }
+
+    protected void loadMultiModuleProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
+        loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/multi_module_maven_project/");
+    }
+
+    protected void loadNbmBaseMavenProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
+        loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/maven_nbm_base_project/");
+    }
+
+    protected void loadNbmDependencyMavenJarProjectInGitRepo(GitSampleRepoRule gitRepo) throws Exception {
+        loadSourceCodeInGitRepository(gitRepo, "/org/jenkinsci/plugins/pipeline/maven/test/test_maven_projects/maven_nbm_dependency_project/");
     }
 
     protected void loadSourceCodeInGitRepository(GitSampleRepoRule gitRepo, String name) throws Exception {

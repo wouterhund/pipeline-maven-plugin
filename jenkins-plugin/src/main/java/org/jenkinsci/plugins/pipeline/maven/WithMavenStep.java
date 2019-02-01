@@ -59,13 +59,14 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Configures maven environment to use within a pipeline job by calling <tt>sh mvn</tt> or <tt>bat mvn</tt>.
+ * Configures maven environment to use within a pipeline job by calling <code>sh mvn</code> or <code>bat mvn</code>.
  * The selected maven installation will be configured and prepended to the path.
  *
  */
 public class WithMavenStep extends Step {
 
 
+    private String tempBinDir;
     private String mavenSettingsConfig;
     private String mavenSettingsFilePath = "";
     private String globalMavenSettingsConfig;
@@ -81,7 +82,15 @@ public class WithMavenStep extends Step {
     public WithMavenStep() {
     }
 
-    
+    public String getTempBinDir() {
+        return tempBinDir;
+    }
+
+    @DataBoundSetter
+    public void setTempBinDir(String tempBinDir) {
+        this.tempBinDir = tempBinDir;
+    }
+
     public String getMavenSettingsConfig() {
         return mavenSettingsConfig;
     }
@@ -186,7 +195,7 @@ public class WithMavenStep extends Step {
 
     @Override
     public StepExecution start(StepContext context) throws Exception {
-        return new WithMavenStepExecution(context, this);
+        return new WithMavenStepExecution2(context, this);
     }
 
     @Extension
@@ -216,7 +225,7 @@ public class WithMavenStep extends Step {
         public SettingsProvider getDefaultSettingsProvider() {
             return GlobalMavenConfig.get().getSettingsProvider();
         }
-        
+
         private Maven.DescriptorImpl getMavenDescriptor() {
             return Jenkins.getInstance().getDescriptorByType(Maven.DescriptorImpl.class);
         }

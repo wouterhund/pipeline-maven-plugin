@@ -89,12 +89,12 @@ public class PipelineGraphPublisher extends MavenPublisher {
         List<MavenArtifact> generatedArtifacts = XmlUtils.listGeneratedArtifacts(mavenSpyLogsElt, true);
         List<String> executedLifecyclePhases = XmlUtils.getExecutedLifecyclePhases(mavenSpyLogsElt);
         
-        recordParentProject(parentProjects, generatedArtifacts, run,listener, dao);
+        recordParentProject(parentProjects, run,listener, dao);
         recordDependencies(dependencies, generatedArtifacts, run, listener, dao);
         recordGeneratedArtifacts(generatedArtifacts, executedLifecyclePhases, run, listener, dao);
     }
 
-    protected void recordParentProject(List<MavenArtifact> parentProjects, List<MavenArtifact> generatedArtifacts,
+    protected void recordParentProject(List<MavenArtifact> parentProjects,
                                        @Nonnull Run run, @Nonnull TaskListener listener, @Nonnull PipelineMavenPluginDao dao) {
         if (LOGGER.isLoggable(Level.FINE)) {
             listener.getLogger().println("[withMaven] pipelineGraphPublisher - recordParentProject - filter: " +
@@ -102,14 +102,7 @@ public class PipelineGraphPublisher extends MavenPublisher {
         }
 
         for (MavenArtifact parentProject : parentProjects) {
-            // Exclude self-generated artifacts (#47996)
-            if(generatedArtifacts.contains(parentProject)) {
-                if (LOGGER.isLoggable(Level.FINER)) {
-                    listener.getLogger().println("[withMaven] pipelineGraphPublisher - Skip recording parent project to generated artifact: " + parentProject.getId());
-                }
-                continue;
-            }
-            if (parentProject.snapshot) {
+            if (parentProject.isSnapshot()) {
                 if (!includeSnapshotVersions) {
                     if (LOGGER.isLoggable(Level.FINER)) {
                         listener.getLogger().println("[withMaven] pipelineGraphPublisher - Skip recording snapshot parent project: " + parentProject.getId());
@@ -131,7 +124,7 @@ public class PipelineGraphPublisher extends MavenPublisher {
                 }
 
                 dao.recordParentProject(run.getParent().getFullName(), run.getNumber(),
-                        parentProject.groupId, parentProject.artifactId, parentProject.version,
+                        parentProject.getGroupId(), parentProject.getArtifactId(), parentProject.getVersion(),
                         this.ignoreUpstreamTriggers);
 
             } catch (RuntimeException e) {
@@ -152,14 +145,7 @@ public class PipelineGraphPublisher extends MavenPublisher {
         }
 
         for (MavenDependency dependency : dependencies) {
-            // Exclude self-generated artifacts (#47996)
-            if(generatedArtifacts.contains(dependency.asMavenArtifact())) {
-                if (LOGGER.isLoggable(Level.FINER)) {
-                    listener.getLogger().println("[withMaven] pipelineGraphPublisher - Skip recording dependency to generated artifact: " + dependency.getId());
-                }
-                continue;
-            }
-            if (dependency.snapshot) {
+            if (dependency.isSnapshot()) {
                 if (!includeSnapshotVersions) {
                     if (LOGGER.isLoggable(Level.FINER)) {
                         listener.getLogger().println("[withMaven] pipelineGraphPublisher - Skip recording snapshot dependency: " + dependency.getId());
@@ -187,8 +173,8 @@ public class PipelineGraphPublisher extends MavenPublisher {
                 }
 
                 dao.recordDependency(run.getParent().getFullName(), run.getNumber(),
-                        dependency.groupId, dependency.artifactId, dependency.baseVersion, dependency.type, dependency.getScope(),
-                        this.ignoreUpstreamTriggers, null);
+                        dependency.getGroupId(), dependency.getArtifactId(), dependency.getBaseVersion(), dependency.getType(), dependency.getScope(),
+                        this.ignoreUpstreamTriggers, dependency.getClassifier());
 
             } catch (RuntimeException e) {
                 listener.error("[withMaven] pipelineGraphPublisher - WARNING: Exception recording " + dependency.getId() + " on build, skip");
@@ -218,23 +204,23 @@ public class PipelineGraphPublisher extends MavenPublisher {
                                 "executedLifecyclePhases: {5}, " +
                                 "skipDownstreamTriggers:{6}, lifecycleThreshold: {7}",
                         new Object[]{run.getParent().getFullName(), run.getNumber(),
-                                artifact.getId(), artifact.type, artifact.version,
+                                artifact.getId(), artifact.getType(), artifact.getVersion(),
                                 executedLifecyclePhases,
                                 skipDownstreamTriggers, lifecycleThreshold});
-                listener.getLogger().println("[withMaven] pipelineGraphPublisher - Record generated artifact: " + artifact.getId() + ", version: " + artifact.version +
+                listener.getLogger().println("[withMaven] pipelineGraphPublisher - Record generated artifact: " + artifact.getId() + ", version: " + artifact.getVersion() +
                         ", executedLifecyclePhases: " + executedLifecyclePhases +
                         ", skipDownstreamTriggers: " + skipDownstreamTriggers + ", lifecycleThreshold:" + lifecycleThreshold +
-                        ", file: " + artifact.file);
+                        ", file: " + artifact.getFile());
             }
             dao.recordGeneratedArtifact(run.getParent().getFullName(), run.getNumber(),
-                    artifact.groupId, artifact.artifactId, artifact.version, artifact.type, artifact.baseVersion,
-                    artifact.repositoryUrl, skipDownstreamPipelines, artifact.extension, artifact.classifier);
-            if ("bundle".equals(artifact.type) && "jar".equals(artifact.extension)) {
+                    artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(), artifact.getType(), artifact.getBaseVersion(),
+                    artifact.getRepositoryUrl(), skipDownstreamPipelines, artifact.getExtension(), artifact.getClassifier());
+            if (("bundle".equals(artifact.getType()) || "nbm".equals(artifact.getType())) && "jar".equals(artifact.getExtension())) {
                 // JENKINS-47069 org.apache.felix:maven-bundle-plugin:bundle uses the type "bundle" for "jar" files
                 // record artifact as both "bundle" and "jar"
                 dao.recordGeneratedArtifact(run.getParent().getFullName(), run.getNumber(),
-                        artifact.groupId, artifact.artifactId, artifact.version, "jar", artifact.baseVersion,
-                        null, skipDownstreamPipelines,  artifact.extension, artifact.classifier);
+                        artifact.getGroupId(), artifact.getArtifactId(), artifact.getVersion(), "jar", artifact.getBaseVersion(),
+                        null, skipDownstreamPipelines, artifact.getExtension(), artifact.getClassifier());
             }
         }
     }
@@ -343,7 +329,7 @@ public class PipelineGraphPublisher extends MavenPublisher {
 
         @Override
         public int ordinal() {
-            return 20;
+            return 0;
         }
 
         @Nonnull

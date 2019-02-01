@@ -1,20 +1,18 @@
 package org.jenkinsci.plugins.pipeline.maven;
 
-import com.google.common.base.Function;
-import com.google.common.base.Predicate;
-import com.google.common.collect.Iterables;
 import hudson.model.Cause;
 import hudson.model.CauseAction;
 import hudson.model.Result;
 import jenkins.branch.BranchSource;
 import jenkins.plugins.git.GitSCMSource;
 import jenkins.plugins.git.GitSampleRepoRule;
-import org.apache.maven.artifact.Artifact;
 import org.hamcrest.Matchers;
+import org.jenkinsci.plugins.pipeline.maven.dao.AbstractPipelineMavenPluginDao;
 import org.jenkinsci.plugins.pipeline.maven.dao.PipelineMavenPluginDao;
-import org.jenkinsci.plugins.pipeline.maven.dao.PipelineMavenPluginH2Dao;
+import org.jenkinsci.plugins.pipeline.maven.dao.PipelineMavenPluginJdbcDao;
 import org.jenkinsci.plugins.pipeline.maven.publishers.PipelineGraphPublisher;
 import org.jenkinsci.plugins.pipeline.maven.trigger.WorkflowJobDependencyTrigger;
+import org.jenkinsci.plugins.pipeline.maven.util.SqlTestsUtils;
 import org.jenkinsci.plugins.pipeline.maven.util.WorkflowMultibranchProjectTestsUtils;
 import org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition;
 import org.jenkinsci.plugins.workflow.job.WorkflowJob;
@@ -26,10 +24,8 @@ import org.junit.Test;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.Future;
-
-import javax.annotation.Nullable;
+import java.util.stream.Collectors;
 
 import static org.hamcrest.CoreMatchers.*;
 import static org.junit.Assert.*;
@@ -107,6 +103,8 @@ public class DependencyGraphTest extends AbstractIntegrationTest {
         jenkinsRule.waitUntilNoActivity();
 
         WorkflowRun mavenWarPipelineLastRun = mavenWarPipeline.getLastBuild();
+        SqlTestsUtils.dump("select * from job_generated_artifacts", ((PipelineMavenPluginJdbcDao)GlobalPipelineMavenConfig.get().getDao()).getDataSource(), System.out);
+        SqlTestsUtils.dump("select * from job_dependencies", ((PipelineMavenPluginJdbcDao)GlobalPipelineMavenConfig.get().getDao()).getDataSource(), System.out);
 
         System.out.println("mavenWarPipelineLastBuild: " + mavenWarPipelineLastRun + " caused by " + mavenWarPipelineLastRun.getCauses());
 
@@ -202,12 +200,8 @@ public class DependencyGraphTest extends AbstractIntegrationTest {
         multiModuleBundleProjectPipeline.setDefinition(new CpsFlowDefinition(pipelineScript, true));
         WorkflowRun build = jenkinsRule.assertBuildStatus(Result.SUCCESS, multiModuleBundleProjectPipeline.scheduleBuild2(0));
 
-        PipelineMavenPluginDao dao = GlobalPipelineMavenConfig.getDao();
-        if (!(dao instanceof PipelineMavenPluginH2Dao))
-            throw new IllegalStateException();
-
-        PipelineMavenPluginH2Dao h2Dao = (PipelineMavenPluginH2Dao) dao;
-        List<MavenArtifact> generatedArtifacts = h2Dao.getGeneratedArtifacts(multiModuleBundleProjectPipeline.getFullName(), build.getNumber());
+        PipelineMavenPluginDao dao = GlobalPipelineMavenConfig.get().getDao();
+        List<MavenArtifact> generatedArtifacts = dao.getGeneratedArtifacts(multiModuleBundleProjectPipeline.getFullName(), build.getNumber());
 
         /*
         [{skip_downstream_triggers=TRUE, type=pom, gav=jenkins.mvn.test.bundle:bundle-parent:0.0.1-SNAPSHOT},
@@ -220,20 +214,13 @@ public class DependencyGraphTest extends AbstractIntegrationTest {
          */
         System.out.println("generated artifacts" + generatedArtifacts);
 
-        Iterable<MavenArtifact> matchingGeneratedArtifacts =Iterables.filter(generatedArtifacts, new Predicate<MavenArtifact>() {
-            @Override
-            public boolean apply(@Nullable MavenArtifact input) {
-                return input != null &&  "jenkins.mvn.test.bundle:print-api:0.0.1-SNAPSHOT".equals(input.getId());
-            }
-        });
-
-        Iterable<String> matchingArtifactTypes = Iterables.transform(matchingGeneratedArtifacts, new Function<MavenArtifact, String>() {
-            @Override
-            public String apply(@Nullable MavenArtifact input) {
-                return input.type;
-            }
-        });
-
+        Iterable<String> matchingArtifactTypes = generatedArtifacts.stream()
+                .filter(input -> input != null &&
+                        input.getGroupId().equals("jenkins.mvn.test.bundle") &&
+                        input.getArtifactId().equals("print-api") &&
+                        input.getVersion().equals("0.0.1-SNAPSHOT"))
+                .map(input -> input.getType())
+                .collect(Collectors.toList());
 
         assertThat(matchingArtifactTypes, Matchers.containsInAnyOrder("jar", "bundle", "pom"));
     }
@@ -291,5 +278,55 @@ public class DependencyGraphTest extends AbstractIntegrationTest {
         assertThat(upstreamCause, notNullValue());
 
 
+    }
+
+    /**
+     * NBM dependencies
+     */
+    @Test
+    public void verify_nbm_downstream_simple_pipeline_trigger() throws Exception {
+        System.out.println("gitRepoRule: " + gitRepoRule);
+        loadNbmDependencyMavenJarProjectInGitRepo(this.gitRepoRule);
+        System.out.println("downstreamArtifactRepoRule: " + downstreamArtifactRepoRule);
+        loadNbmBaseMavenProjectInGitRepo(this.downstreamArtifactRepoRule);
+
+        String mavenJarPipelineScript = "node('master') {\n"
+                + "    git($/" + gitRepoRule.toString() + "/$)\n"
+                + "    withMaven() {\n"
+                + "        sh 'mvn install'\n"
+                + "    }\n"
+                + "}";
+        String mavenWarPipelineScript = "node('master') {\n"
+                + "    git($/" + downstreamArtifactRepoRule.toString() + "/$)\n"
+                + "    withMaven() {\n"
+                + "        sh 'mvn install'\n"
+                + "    }\n"
+                + "}";
+
+        WorkflowJob mavenNbmDependency = jenkinsRule.createProject(WorkflowJob.class, "build-nbm-dependency");
+        mavenNbmDependency.setDefinition(new CpsFlowDefinition(mavenJarPipelineScript, true));
+        mavenNbmDependency.addTrigger(new WorkflowJobDependencyTrigger());
+
+        WorkflowRun mavenJarPipelineFirstRun = jenkinsRule.assertBuildStatus(Result.SUCCESS, mavenNbmDependency.scheduleBuild2(0));
+        // TODO check in DB that the generated artifact is recorded
+
+        WorkflowJob mavenNbmBasePipeline = jenkinsRule.createProject(WorkflowJob.class, "build-nbm-base");
+        mavenNbmBasePipeline.setDefinition(new CpsFlowDefinition(mavenWarPipelineScript, true));
+        mavenNbmBasePipeline.addTrigger(new WorkflowJobDependencyTrigger());
+        WorkflowRun mavenWarPipelineFirstRun = jenkinsRule.assertBuildStatus(Result.SUCCESS, mavenNbmBasePipeline.scheduleBuild2(0));
+        // TODO check in DB that the dependency on the war project is recorded
+        System.out.println("build-nbm-dependencyFirstRun: " + mavenWarPipelineFirstRun);
+
+        WorkflowRun mavenJarPipelineSecondRun = jenkinsRule.assertBuildStatus(Result.SUCCESS, mavenNbmDependency.scheduleBuild2(0));
+
+        jenkinsRule.waitUntilNoActivity();
+
+        WorkflowRun mavenWarPipelineLastRun = mavenNbmBasePipeline.getLastBuild();
+
+        System.out.println("build-nbm-baseLastBuild: " + mavenWarPipelineLastRun + " caused by " + mavenWarPipelineLastRun.getCauses());
+
+        assertThat(mavenWarPipelineLastRun.getNumber(), is(mavenWarPipelineFirstRun.getNumber() + 1));
+        Cause.UpstreamCause upstreamCause = mavenWarPipelineLastRun.getCause(Cause.UpstreamCause.class);
+        assertThat(upstreamCause, notNullValue());
     }
 }

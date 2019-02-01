@@ -24,7 +24,6 @@
 
 package org.jenkinsci.plugins.pipeline.maven.util;
 
-import edu.umd.cs.findbugs.annotations.NonNull;
 import hudson.FilePath;
 import org.apache.commons.lang.StringUtils;
 import org.jenkinsci.plugins.pipeline.maven.MavenArtifact;
@@ -79,17 +78,22 @@ public class XmlUtils {
     }
 
     private static void loadMavenArtifact(Element artifactElt, MavenArtifact mavenArtifact) {
-        mavenArtifact.groupId = artifactElt.getAttribute("groupId");
-        mavenArtifact.artifactId = artifactElt.getAttribute("artifactId");
-        mavenArtifact.version = artifactElt.getAttribute("version");
-        mavenArtifact.baseVersion = artifactElt.getAttribute("baseVersion");
-        if (mavenArtifact.baseVersion == null || mavenArtifact.baseVersion.isEmpty()) {
-            mavenArtifact.baseVersion = mavenArtifact.version;
+        mavenArtifact.setGroupId(artifactElt.getAttribute("groupId"));
+        mavenArtifact.setArtifactId(artifactElt.getAttribute("artifactId"));
+        mavenArtifact.setVersion(artifactElt.getAttribute("version"));
+        mavenArtifact.setBaseVersion(artifactElt.getAttribute("baseVersion"));
+        if (mavenArtifact.getBaseVersion() == null || mavenArtifact.getBaseVersion().isEmpty()) {
+            mavenArtifact.setBaseVersion(mavenArtifact.getVersion());
         }
-        mavenArtifact.snapshot = Boolean.valueOf(artifactElt.getAttribute("snapshot"));
-        mavenArtifact.type = artifactElt.getAttribute("type");
-        mavenArtifact.classifier = artifactElt.hasAttribute("classifier") ? artifactElt.getAttribute("classifier") : null;
-        mavenArtifact.extension = artifactElt.getAttribute("extension");
+        mavenArtifact.setSnapshot(Boolean.valueOf(artifactElt.getAttribute("snapshot")));
+        mavenArtifact.setType(artifactElt.getAttribute("type"));
+        if (mavenArtifact.getType() == null || mavenArtifact.getType().isEmpty()) {
+            // workaround: sometimes we use "XmlUtils.newMavenArtifact()" on "project" elements, in this case, "packaging" is defined but "type" is not defined
+            // we should  probably not use "MavenArtifact"
+            mavenArtifact.setType(artifactElt.getAttribute("packaging"));
+        }
+        mavenArtifact.setClassifier(artifactElt.hasAttribute("classifier") ? artifactElt.getAttribute("classifier") : null);
+        mavenArtifact.setExtension(artifactElt.getAttribute("extension"));
     }
 
 
@@ -256,64 +260,25 @@ public class XmlUtils {
    </ExecutionEvent>
      */
     @Nonnull
-    public static List<Element> getExecutionEvents(@Nonnull Element mavenSpyLogs, String pluginGroupId, String pluginArtifactId, String pluginGoal) {
-        List<Element> result = new ArrayList<>();
-        for (Element executionEventElt : getChildrenElements(mavenSpyLogs, "ExecutionEvent")) {
-            Element pluginElt = XmlUtils.getUniqueChildElementOrNull(executionEventElt, "plugin");
-            if (pluginElt == null) {
+    public static List<Element> getExecutionEventsByPlugin(@Nonnull Element mavenSpyLogs, String pluginGroupId, String pluginArtifactId, String pluginGoal, String... eventType) {
+        Set<String> eventTypes = new HashSet<>(Arrays.asList(eventType));
 
-            } else {
-                if (pluginElt.getAttribute("groupId").equals(pluginGroupId) &&
-                        pluginElt.getAttribute("artifactId").equals(pluginArtifactId) &&
-                        pluginElt.getAttribute("goal").equals(pluginGoal)) {
-                    result.add(executionEventElt);
-                } else {
-
-                }
-            }
-
-        }
-        return result;
-    }
-
-    /*
-    <ExecutionEvent type="MojoSucceeded" class="org.apache.maven.lifecycle.internal.DefaultExecutionEvent" _time="2017-02-02 23:03:17.06">
-      <project artifactIdId="supplychain-portal" groupId="com.acmewidgets.supplychain" name="supplychain-portal" version="0.0.7" />
-      <plugin executionId="default-test" goal="test" groupId="org.apache.maven.plugins" artifactId="maven-surefire-plugin" version="2.18.1">
-         <reportsDirectory>${project.build.directory}/surefire-reports</reportsDirectory>
-      </plugin>
-    </ExecutionEvent>
-     */
-
-    /**
-     *
-     * @param mavenSpyLogs
-     * @param eventType e.g. "MojoSucceeded"
-     * @param pluginGroupId e.g. "org.apache.maven.plugins" artifactId=
-     * @param pluginArtifactId e.g. "maven-surefire-plugin"
-     * @param pluginGoal e.g. "test"
-     * @return
-     */
-    @Nonnull
-    public static List<Element> getExecutionEvents(@Nonnull Element mavenSpyLogs, String eventType, String pluginGroupId, String pluginArtifactId, String pluginGoal) {
         List<Element> result = new ArrayList<>();
         for (Element executionEventElt : getChildrenElements(mavenSpyLogs, "ExecutionEvent")) {
 
-            if (executionEventElt.getAttribute("type").equals(eventType)) {
+            if (eventTypes.contains(executionEventElt.getAttribute("type"))) {
                 Element pluginElt = XmlUtils.getUniqueChildElementOrNull(executionEventElt, "plugin");
                 if (pluginElt == null) {
-                    // ignore unexpected
+
                 } else {
                     if (pluginElt.getAttribute("groupId").equals(pluginGroupId) &&
                             pluginElt.getAttribute("artifactId").equals(pluginArtifactId) &&
                             pluginElt.getAttribute("goal").equals(pluginGoal)) {
                         result.add(executionEventElt);
                     } else {
-                        // ignore non matching plugin
+
                     }
                 }
-            } else {
-                // ignore not supported event type
             }
 
         }
@@ -452,8 +417,8 @@ public class XmlUtils {
     /**
      * Concatenate the given {@code elements} using the given {@code delimiter} to concatenate.
      */
-    @NonNull
-    public static String join(@NonNull Iterable<String> elements, @NonNull String delimiter) {
+    @Nonnull
+    public static String join(@Nonnull Iterable<String> elements, @Nonnull String delimiter) {
         StringBuilder result = new StringBuilder();
         Iterator<String> it = elements.iterator();
         while (it.hasNext()) {
@@ -479,20 +444,20 @@ public class XmlUtils {
             Element projectElt = XmlUtils.getUniqueChildElement(projectSucceededElt, "project");
             MavenArtifact projectArtifact = XmlUtils.newMavenArtifact(projectElt);
             MavenArtifact pomArtifact = new MavenArtifact();
-            pomArtifact.groupId = projectArtifact.groupId;
-            pomArtifact.artifactId = projectArtifact.artifactId;
-            pomArtifact.baseVersion = projectArtifact.baseVersion;
-            pomArtifact.version = projectArtifact.version;
-            pomArtifact.snapshot = projectArtifact.snapshot;
-            pomArtifact.type = "pom";
-            pomArtifact.extension = "pom";
-            pomArtifact.file = projectElt.getAttribute("file");
+            pomArtifact.setGroupId(projectArtifact.getGroupId());
+            pomArtifact.setArtifactId(projectArtifact.getArtifactId());
+            pomArtifact.setBaseVersion(projectArtifact.getBaseVersion());
+            pomArtifact.setVersion(projectArtifact.getVersion());
+            pomArtifact.setSnapshot(projectArtifact.isSnapshot());
+            pomArtifact.setType("pom");
+            pomArtifact.setExtension("pom");
+            pomArtifact.setFile(projectElt.getAttribute("file"));
 
             result.add(pomArtifact);
 
             Element artifactElt = XmlUtils.getUniqueChildElement(projectSucceededElt, "artifact");
             MavenArtifact mavenArtifact = XmlUtils.newMavenArtifact(artifactElt);
-            if ("pom".equals(mavenArtifact.type)) {
+            if ("pom".equals(mavenArtifact.getType())) {
                 // No file is generated in a "pom" type project, don't add the pom file itself
                 // TODO: evaluate if we really want to skip this file - cyrille le clerc 2018-04-12
             } else {
@@ -503,13 +468,13 @@ public class XmlUtils {
                                 mavenArtifact + " in " + XmlUtils.toString(artifactElt));
                     }
                 } else {
-                    mavenArtifact.file = StringUtils.trim(fileElt.getTextContent());
+                    mavenArtifact.setFile(StringUtils.trim(fileElt.getTextContent()));
 
-                    Element artifactDeployedEvent = XmlUtils.getArtifactDeployedEvent(artifactDeployedEvents, mavenArtifact.file);
+                    Element artifactDeployedEvent = XmlUtils.getArtifactDeployedEvent(artifactDeployedEvents, mavenArtifact.getFile());
                     if(artifactDeployedEvent == null) {
                         // artifact has not been deployed ("mvn deploy")
                     } else {
-                        mavenArtifact.repositoryUrl = XmlUtils.getUniqueChildElement(artifactDeployedEvent, "repository").getAttribute("url");
+                        mavenArtifact.setRepositoryUrl(XmlUtils.getUniqueChildElement(artifactDeployedEvent, "repository").getAttribute("url"));
                     }
                 }
                 result.add(mavenArtifact);
@@ -528,13 +493,13 @@ public class XmlUtils {
                                     attachedMavenArtifact + " in " + XmlUtils.toString(attachedArtifactElt));
                         }
                     } else {
-                        attachedMavenArtifact.file = StringUtils.trim(fileElt.getTextContent());
+                        attachedMavenArtifact.setFile(StringUtils.trim(fileElt.getTextContent()));
 
-                        Element attachedArtifactDeployedEvent = XmlUtils.getArtifactDeployedEvent(artifactDeployedEvents, attachedMavenArtifact.file);
+                        Element attachedArtifactDeployedEvent = XmlUtils.getArtifactDeployedEvent(artifactDeployedEvents, attachedMavenArtifact.getFile());
                         if(attachedArtifactDeployedEvent == null) {
                             // artifact has not been deployed ("mvn deploy")
                         } else {
-                            attachedMavenArtifact.repositoryUrl = XmlUtils.getUniqueChildElement(attachedArtifactDeployedEvent, "repository").getAttribute("url");
+                            attachedMavenArtifact.setRepositoryUrl(XmlUtils.getUniqueChildElement(attachedArtifactDeployedEvent, "repository").getAttribute("url"));
                         }
 
                     }

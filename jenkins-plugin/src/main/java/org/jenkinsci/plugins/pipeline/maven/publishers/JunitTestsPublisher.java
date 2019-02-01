@@ -27,16 +27,22 @@ package org.jenkinsci.plugins.pipeline.maven.publishers;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
+import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.StreamBuildListener;
 import hudson.model.TaskListener;
 import hudson.tasks.junit.JUnitResultArchiver;
 import hudson.tasks.junit.TestDataPublisher;
+import hudson.tasks.junit.TestResultAction;
+import hudson.tasks.junit.TestResultSummary;
+import hudson.tasks.junit.pipeline.JUnitResultsStepExecution;
+import hudson.tasks.test.PipelineTestDetails;
 import org.jenkinsci.Symbol;
 import org.jenkinsci.plugins.pipeline.maven.MavenArtifact;
 import org.jenkinsci.plugins.pipeline.maven.MavenSpyLogProcessor;
 import org.jenkinsci.plugins.pipeline.maven.MavenPublisher;
 import org.jenkinsci.plugins.pipeline.maven.util.XmlUtils;
+import org.jenkinsci.plugins.workflow.graph.FlowNode;
 import org.jenkinsci.plugins.workflow.steps.StepContext;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
@@ -190,8 +196,8 @@ public class JunitTestsPublisher extends MavenPublisher {
             return;
         }
 
-        List<Element> sureFireTestEvents = XmlUtils.getExecutionEvents(mavenSpyLogsElt, GROUP_ID, SUREFIRE_ID, SUREFIRE_GOAL);
-        List<Element> failSafeTestEvents = XmlUtils.getExecutionEvents(mavenSpyLogsElt, GROUP_ID, FAILSAFE_ID, FAILSAFE_GOAL);
+        List<Element> sureFireTestEvents = XmlUtils.getExecutionEventsByPlugin(mavenSpyLogsElt, GROUP_ID, SUREFIRE_ID, SUREFIRE_GOAL, "MojoSucceeded", "MojoFailed");
+        List<Element> failSafeTestEvents = XmlUtils.getExecutionEventsByPlugin(mavenSpyLogsElt, GROUP_ID, FAILSAFE_ID, FAILSAFE_GOAL, "MojoSucceeded", "MojoFailed");
 
         executeReporter(context, listener, sureFireTestEvents, SUREFIRE_ID + ":" + SUREFIRE_GOAL);
         executeReporter(context, listener, failSafeTestEvents, FAILSAFE_ID + ":" + FAILSAFE_GOAL);
@@ -218,10 +224,6 @@ public class JunitTestsPublisher extends MavenPublisher {
         */
 
         for (Element testEvent : testEvents) {
-            String surefireEventType = testEvent.getAttribute("type");
-            if (!surefireEventType.equals("MojoSucceeded") && !surefireEventType.equals("MojoFailed")) {
-                continue;
-            }
             Element pluginElt = XmlUtils.getUniqueChildElement(testEvent, "plugin");
             Element reportsDirectoryElt = XmlUtils.getUniqueChildElementOrNull(pluginElt, "reportsDirectory");
             Element projectElt = XmlUtils.getUniqueChildElement(testEvent, "project");
@@ -292,26 +294,35 @@ public class JunitTestsPublisher extends MavenPublisher {
             }
 
             try {
-                archiver.perform(run, workspace, launcher, listener);
-                /*
-                TODO replace "archiver.perform(run, workspace, launcher, listener)" by the code below when we can bump the junit-plugin to version 1.23+
-
+                // see hudson.tasks.junit.pipeline.JUnitResultsStepExecution.run
+                FlowNode node = context.get(FlowNode.class);
+                String nodeId = node.getId();
                 List<FlowNode> enclosingBlocks = JUnitResultsStepExecution.getEnclosingStagesAndParallels(node);
                 PipelineTestDetails pipelineTestDetails = new PipelineTestDetails();
                 pipelineTestDetails.setNodeId(nodeId);
                 pipelineTestDetails.setEnclosingBlocks(JUnitResultsStepExecution.getEnclosingBlockIds(enclosingBlocks));
                 pipelineTestDetails.setEnclosingBlockNames(JUnitResultsStepExecution.getEnclosingBlockNames(enclosingBlocks));
 
-                TestResultAction testResultAction = JUnitResultArchiver.parseAndAttach(archiver, pipelineTestDetails,
-                        run, workspace, launcher, listener);JunitTestsPublisher
+                TestResultAction testResultAction = JUnitResultArchiver.parseAndAttach(archiver, pipelineTestDetails, run, workspace, launcher, listener);
 
-                if (testResultAction != null) {
-                    // TODO: Once JENKINS-43995 lands, update this to set the step status instead of the entire build.
-                    if (testResultAction.getResult().getFailCount() > 0) {
-                        context.setResult(Result.UNSTABLE);
+                if (testResultAction == null) {
+                    // no unit test results found
+                    if (LOGGER.isLoggable(Level.FINE)) {
+                        listener.getLogger().println("[withMaven] junitPublisher - no unit test results found, ignore");
                     }
+                } else if (testResultAction.getResult().getFailCount() == 0) {
+                    // unit tests are all successful
+                    if (LOGGER.isLoggable(Level.FINE)) {
+                        listener.getLogger().println("[withMaven] junitPublisher - unit tests are all successful");
+                    }
+                } else {
+                    if (LOGGER.isLoggable(Level.FINE)) {
+                        listener.getLogger().println("[withMaven] junitPublisher - " + testResultAction.getResult().getFailCount() + " unit test failure(s) found, mark job as unstable");
+                    }
+                    // TODO: Once JENKINS-43995 lands, update this to set the step status instead of the entire build.
+                    // context.setResult(Result.UNSTABLE);
+                    run.setResult(Result.UNSTABLE);
                 }
-                */
             } catch (Exception e) {
                 listener.error("[withMaven] junitPublisher - Silently ignore exception archiving JUnit results for Maven artifact " + mavenArtifact.toString() + " generated by " + pluginInvocation + ": " + e);
                 LOGGER.log(Level.WARNING, "Exception processing " + XmlUtils.toString(testEvent), e);

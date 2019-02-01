@@ -24,11 +24,29 @@ THE SOFTWARE.
 
 <?jelly escape-by-default='true'?>
 <j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout"
-         xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+         xmlns:t="/lib/hudson" xmlns:f="/lib/form" xmlns:c="/lib/credentials">
 
     <f:section title="${%Pipeline Maven Configuration}">
         <f:entry title="${%DAO}">
             <pre><code>${instance.dao.toPrettyString()}</code></pre>
+        </f:entry>
+        <f:entry title="${%Database Configuration}">
+            <f:entry title="${%JDBC URL}" field="jdbcUrl"
+                     description="JDBC URL. For production grade workloads, use MySQL / MariaDB. If empty, then a non production grade H2 embedded database will be used.">
+                <f:textbox/>
+            </f:entry>
+            <f:entry title="${%JDBC Credentials}" field="jdbcCredentialsId">
+                <c:select/>
+            </f:entry>
+
+            <f:advanced title="${%Advanced Database Configuration}">
+                <f:entry title="${%DataSource Properties}" field="properties"
+                         description="DateSource and driver properties">
+                    <f:textarea/>
+                </f:entry>
+            </f:advanced>
+
+            <f:validateButton title="${%Validate Database Configuration}" method="validateJdbcConnection" with="jdbcUrl,properties,jdbcCredentialsId"/>
         </f:entry>
         <f:entry title="${%Trigger downstream upon result}" field="triggerDownstreamUponResult" >
             <f:checkbox title="${%Success}" field="triggerDownstreamUponResultSuccess" default="true" />
@@ -39,9 +57,8 @@ THE SOFTWARE.
         </f:entry>
         <f:entry title="${%Options}">
             <f:repeatableHeteroProperty field="publisherOptions" targetType="org.jenkinsci.plugins.pipeline.maven.MavenPublisher"
-                                        addCaption="${%Add Publisher Options}" hasHeader="true" oneEach="true"/>
+                                        addCaption="${%Add Publisher Options}" hasHeader="true" oneEach="true" honorOrder="true"/>
         </f:entry>
-
     </f:section>
 
 </j:jelly>
